@@ -1,0 +1,18 @@
+from enum import Enum
+
+WIDTH, HEIGHT = 1280, 720
+FPS = 60
+
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+BACKGROUND_COLOR = (30, 30, 40)
+BOARD_COLOR = (50, 50, 70)
+CARD_COLOR = (200, 200, 200)
+SELECTED_COLOR = (255, 215, 0)
+ATTACK_COLOR = (255, 50, 50)
+
+class AppState(Enum):
+    MENU = 1
+    BATTLE = 2
+    ALBUM = 3
+    SHOP = 4
