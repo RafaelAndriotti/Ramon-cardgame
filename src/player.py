@@ -1,5 +1,7 @@
+from src.constants import DEFAULT_PLAYER_HP
+
 class Player:
-    def __init__(self, name, max_hp=8000):
+    def __init__(self, name, max_hp=DEFAULT_PLAYER_HP):
         self.name = name
         self.hp = max_hp
         self.max_hp = max_hp

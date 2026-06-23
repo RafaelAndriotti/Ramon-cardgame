@@ -16,3 +16,8 @@ class AppState(Enum):
     BATTLE = 2
     ALBUM = 3
     SHOP = 4
+    LEVEL_SELECT = 5
+    RECYCLE = 6
+
+DEFAULT_PLAYER_HP = 8000
+

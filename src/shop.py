@@ -30,6 +30,7 @@ def buy_pack(pack, all_cards):
         db.update_coins(-pack.cost)
         for card in drawn_cards:
             db.add_card_to_collection(card.card_id, 1)
+            db.add_new_card_highlight(card.card_id)
             
         return True, drawn_cards
     return False, "Moedas insuficientes."

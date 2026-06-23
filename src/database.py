@@ -31,6 +31,13 @@ def init_db():
         )
     ''')
     
+    # Tabela de novas cartas (destaque)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS new_cards_highlight (
+            card_id INTEGER PRIMARY KEY
+        )
+    ''')
+    
     # Inserir jogador padrão se não existir
     cursor.execute('SELECT * FROM player WHERE id = 1')
     if not cursor.fetchone():
@@ -83,5 +90,52 @@ def add_card_to_collection(card_id, amount=1):
     else:
         cursor.execute('INSERT INTO collection (player_id, card_id, count) VALUES (1, ?, ?)', (card_id, amount))
         
+    conn.commit()
+    conn.close()
+
+def add_new_card_highlight(card_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR IGNORE INTO new_cards_highlight (card_id) VALUES (?)', (card_id,))
+    conn.commit()
+    conn.close()
+
+def get_new_cards_highlight():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT card_id FROM new_cards_highlight')
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0] for row in rows}
+
+def remove_new_card_highlight(card_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM new_cards_highlight WHERE card_id = ?', (card_id,))
+    conn.commit()
+    conn.close()
+
+def recycle_cards(card_deductions, reward_card_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Deduct cards
+    for card_id, qty in card_deductions.items():
+        cursor.execute('UPDATE collection SET count = count - ? WHERE player_id = 1 AND card_id = ?', (qty, card_id))
+        
+    # Clean up cards with count <= 0 (though count should remain >= 1)
+    cursor.execute('DELETE FROM collection WHERE player_id = 1 AND count <= 0')
+    
+    # Add reward card
+    cursor.execute('SELECT count FROM collection WHERE player_id = 1 AND card_id = ?', (reward_card_id,))
+    row = cursor.fetchone()
+    if row:
+        cursor.execute('UPDATE collection SET count = count + 1 WHERE player_id = 1 AND card_id = ?', (reward_card_id,))
+    else:
+        cursor.execute('INSERT INTO collection (player_id, card_id, count) VALUES (1, ?, 1)', (reward_card_id,))
+        
+    # Also add to new_cards_highlight
+    cursor.execute('INSERT OR IGNORE INTO new_cards_highlight (card_id) VALUES (?)', (reward_card_id,))
+    
     conn.commit()
     conn.close()

@@ -14,9 +14,8 @@ class Phase(Enum):
     GAME_OVER = 6
 
 class Game:
-    def __init__(self):
+    def __init__(self, level_id=1):
         self.player = Player("Jogador")
-        self.enemy = Player("Inimigo")
         self.board = Board()
         self.current_phase = Phase.MAIN_1
         self.turn = 1
@@ -24,20 +23,33 @@ class Game:
         self.winner = None
         self.reward_given = False
         self.cards_drawn_this_turn = 0
+        self.level_id = level_id
+        self.enemy_action_queue = []
         
-        level = 1
-        try:
-            player_data = db.get_player_data()
-            if len(player_data) > 2:
-                level = player_data[2]
-        except:
-            pass
+        from src.campaign_data import CAMPAIGN_WORLDS
+        
+        # Busca dinâmica das informações da fase ativa no CAMPAIGN_WORLDS
+        params = None
+        for w_data in CAMPAIGN_WORLDS.values():
+            if level_id in w_data["levels"]:
+                params = w_data["levels"][level_id]
+                break
+        if not params:
+            params = CAMPAIGN_WORLDS[1]["levels"][1] # Fallback
             
-        self.enemy_level = level
-        self.enemy_deck = list(ALL_CARDS_DB.values()) * 5 
+        self.enemy = Player(params["boss"], max_hp=params["hp"])
+        self.enemy_level = params["level"]
+        
+        # Build themed deck
+        matching_cards = [c for c in ALL_CARDS_DB.values() if getattr(c, 'element', None) in params["elements"]]
+        if not matching_cards:
+            matching_cards = list(ALL_CARDS_DB.values())
+            
+        self.enemy_deck = matching_cards * 5
         random.shuffle(self.enemy_deck)
-        hand_size = 5 + level
-        self.enemy.hand = [self.enemy_deck.pop() for _ in range(hand_size)]
+        
+        hand_size = 5 + (self.enemy_level // 2)
+        self.enemy.hand = [self.enemy_deck.pop() for _ in range(min(len(self.enemy_deck), hand_size))]
         
     def check_win_condition(self):
         if self.current_phase == Phase.GAME_OVER:
@@ -66,41 +78,73 @@ class Game:
             self.current_phase = Phase.END
         elif self.current_phase == Phase.END:
             self.is_player_turn = False
-            self.play_enemy_turn()
+            self.prepare_enemy_turn()
 
-    def play_enemy_turn(self):
-        if self.current_phase == Phase.GAME_OVER: return
+    def prepare_enemy_turn(self):
+        if self.current_phase == Phase.GAME_OVER:
+            return
+            
+        self.enemy_action_queue = []
         
+        # 1. Draw cards
         cards_to_draw = 2 + (self.enemy_level // 2)
         for _ in range(cards_to_draw):
             if len(self.enemy_deck) > 0:
-                self.enemy.hand.append(self.enemy_deck.pop())
-            
+                card = self.enemy_deck.pop()
+                self.enemy_action_queue.append({"type": "draw", "card": card})
+                
+        # 2. Summons
+        empty_slots = [i for i in range(5) if self.board.enemy_monsters[i] is None]
+        temp_hand = list(self.enemy.hand)
+        
         summons_allowed = min(5, 2 + (self.enemy_level // 2))
         for _ in range(summons_allowed):
-            empty_slots = [i for i in range(5) if self.board.enemy_monsters[i] is None]
-            if empty_slots and len(self.enemy.hand) > 0:
+            simulated_hand = temp_hand + [act["card"] for act in self.enemy_action_queue if act["type"] == "draw"]
+            if empty_slots and simulated_hand:
                 slot_to_play = random.choice(empty_slots)
-                card_to_play = self.enemy.hand.pop(0) 
-                self.board.place_monster(False, slot_to_play, card_to_play)
+                empty_slots.remove(slot_to_play)
+                card_to_play = simulated_hand[0]
+                if card_to_play in temp_hand:
+                    temp_hand.remove(card_to_play)
+                self.enemy_action_queue.append({"type": "summon", "slot": slot_to_play, "card": card_to_play})
+                
+        # 3. Attacks
+        simulated_enemy_monsters = list(self.board.enemy_monsters)
+        for act in self.enemy_action_queue:
+            if act["type"] == "summon":
+                simulated_enemy_monsters[act["slot"]] = act["card"]
+                
+        simulated_player_monsters = list(self.board.player_monsters)
         
         for i in range(5):
-            attacker = self.board.enemy_monsters[i]
+            attacker = simulated_enemy_monsters[i]
             if attacker:
-                targets = [idx for idx, m in enumerate(self.board.player_monsters) if m is not None]
+                targets = [idx for idx, m in enumerate(simulated_player_monsters) if m is not None]
                 if targets:
                     target_slot = random.choice(targets)
-                    self.execute_enemy_attack(i, target_slot)
-                else:
-                    self.player.hp -= attacker.attack
-                    self.check_win_condition()
-                    if self.current_phase == Phase.GAME_OVER: break
+                    self.enemy_action_queue.append({"type": "attack", "attacker_slot": i, "defender_slot": target_slot})
                     
-        if self.current_phase != Phase.GAME_OVER:
-            self.turn += 1
-            self.is_player_turn = True
-            self.current_phase = Phase.MAIN_1
-            self.cards_drawn_this_turn = 0
+                    # Resolve combat in simulation
+                    att_multiplier = attacker.get_element_multiplier(simulated_player_monsters[target_slot])
+                    final_attack = attacker.attack * att_multiplier
+                    
+                    if final_attack > simulated_player_monsters[target_slot].attack:
+                        simulated_player_monsters[target_slot] = None
+                    elif final_attack < simulated_player_monsters[target_slot].attack:
+                        simulated_enemy_monsters[i] = None
+                    else:
+                        simulated_player_monsters[target_slot] = None
+                        simulated_enemy_monsters[i] = None
+                else:
+                    self.enemy_action_queue.append({"type": "direct_attack", "attacker_slot": i})
+                    
+        self.enemy_action_queue.append({"type": "end_turn"})
+
+    def execute_enemy_direct_attack(self, slot):
+        attacker = self.board.enemy_monsters[slot]
+        if attacker:
+            self.player.hp -= attacker.attack
+        self.check_win_condition()
 
     def execute_enemy_attack(self, enemy_slot, player_slot):
         attacker = self.board.enemy_monsters[enemy_slot]
@@ -148,3 +192,4 @@ class Game:
         if attacker:
             self.enemy.hp -= attacker.attack
         self.check_win_condition()
+
